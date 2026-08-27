@@ -1,0 +1,11 @@
+bin/netnotifyd
+bin/netnotifyd.exe
+bin/netnotifyd-*
+bin/*.ipk
+bin/showmsg.go
+src/netnotifyd
+src/netnotifyd.exe
+*.ipk
+*.test
+.DS_Store
+Thumbs.db

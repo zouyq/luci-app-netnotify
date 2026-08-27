@@ -1,0 +1,30 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+USE_PROCD=1
+
+PROG=/usr/bin/netnotifyd
+NAME=netnotify
+
+start_service() {
+	local enable
+	config_load netnotify
+	config_get_bool enable main enable 0
+	[ "$enable" -eq 1 ] || return 0
+
+	procd_open_instance
+	procd_set_param command "$PROG" run
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger netnotify
+}
+
+reload_service() {
+	stop
+	start
+}

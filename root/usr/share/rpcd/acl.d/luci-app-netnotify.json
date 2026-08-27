@@ -1,0 +1,26 @@
+{
+	"luci-app-netnotify": {
+		"description": "Grant access to NetNotify configuration",
+		"read": {
+			"uci": [ "netnotify" ],
+			"file": {
+				"/tmp/netnotify/devices.json": [ "read" ],
+				"/tmp/netnotify/netnotify.log": [ "read" ]
+			},
+			"ubus": {
+				"service": [ "list" ]
+			}
+		},
+		"write": {
+			"uci": [ "netnotify" ],
+			"file": {
+				"/etc/init.d/netnotify": [ "exec" ],
+				"/usr/bin/netnotifyd": [ "exec" ]
+			},
+			"ubus": {
+				"service": [ "list" ]
+			},
+			"cgi-io": [ "exec" ]
+		}
+	}
+}

@@ -1,0 +1,17 @@
+{
+  "enable": true,
+  "device_name": "DevHost",
+  "channel": "webhook",
+  "webhook_url": "https://httpbin.org/post",
+  "suspect_timeout_sec": 60,
+  "probe_max_parallel": 2,
+  "offline_fail_count": 3,
+  "lease_poll_sec": 30,
+  "debug": true,
+  "aliases": {
+    "aa:bb:cc:dd:ee:ff": "Phone"
+  },
+  "dhcp_leases_path": "/var/dhcp.leases",
+  "state_file": "/tmp/netnotify/devices.json",
+  "log_file": "/tmp/netnotify/netnotify.log"
+}

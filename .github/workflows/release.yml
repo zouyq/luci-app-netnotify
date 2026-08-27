@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache-dependency-path: src/go.sum
+
+      - name: Test
+        working-directory: src
+        run: go test ./...
+
+      - name: Build release binaries
+        working-directory: src
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../dist/netnotifyd-linux-amd64 ./cmd/netnotifyd
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../dist/netnotifyd-linux-arm64 ./cmd/netnotifyd
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" -o ../dist/netnotifyd-linux-armv7 ./cmd/netnotifyd
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags="-s -w" -o ../dist/netnotifyd-linux-mipsle ./cmd/netnotifyd
+          cd ../dist
+          sha256sum netnotifyd-* > SHA256SUMS.txt
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/netnotifyd-linux-amd64
+            dist/netnotifyd-linux-arm64
+            dist/netnotifyd-linux-armv7
+            dist/netnotifyd-linux-mipsle
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

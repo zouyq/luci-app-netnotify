@@ -1,0 +1,29 @@
+{
+	"admin/services/netnotify": {
+		"title": "NetNotify",
+		"order": 60,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-netnotify" ],
+			"uci": { "netnotify": true }
+		}
+	},
+	"admin/services/netnotify/settings": {
+		"title": "Settings",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "netnotify/settings"
+		}
+	},
+	"admin/services/netnotify/status": {
+		"title": "Status",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "netnotify/status"
+		}
+	}
+}
