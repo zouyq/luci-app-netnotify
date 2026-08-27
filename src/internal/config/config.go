@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.2.3"
+const Version = "0.3.0"
 
 // Config holds runtime settings for netnotifyd.
 type Config struct {
@@ -57,6 +57,20 @@ type Config struct {
 	// Online list appended to up/down pushes
 	NotifyListEnable bool `json:"notify_list_enable"`
 	NotifyListMax    int  `json:"notify_list_max"`
+
+	// WAN connectivity watchdog (from network_check.sh)
+	NetcheckEnable           bool     `json:"netcheck_enable"`
+	NetcheckHosts            []string `json:"netcheck_hosts"`
+	NetcheckIPs              []string `json:"netcheck_ips"`
+	NetcheckIntervalSec      int      `json:"netcheck_interval_sec"`
+	NetcheckTimeoutSec       int      `json:"netcheck_timeout_sec"`
+	NetcheckRetry            int      `json:"netcheck_retry"`
+	NetcheckRetryIntervalSec int      `json:"netcheck_retry_interval_sec"`
+	NetcheckWANIface         string   `json:"netcheck_wan_iface"`
+	NetcheckStartupWaitSec   int      `json:"netcheck_startup_wait_sec"`
+	NetcheckCooldownSec      int      `json:"netcheck_cooldown_sec"`
+	NetcheckRecoverWaitSec   int      `json:"netcheck_recover_wait_sec"`
+	NetcheckPushOnRecover    bool     `json:"netcheck_push_on_recover"`
 }
 
 // Defaults returns safe defaults (disabled until configured).
@@ -87,6 +101,23 @@ func Defaults() Config {
 		CronStatus:        true,
 		NotifyListEnable:  true,
 		NotifyListMax:     15,
+		NetcheckEnable:    false,
+		NetcheckHosts: []string{
+			"connect.rom.miui.com",
+			"connectivitycheck.vivo.com.cn",
+			"connectivitycheck.platform.hicloud.com",
+			"conn1.oppomobile.com",
+		},
+		NetcheckIPs:              []string{"223.5.5.5", "119.29.29.29"},
+		NetcheckIntervalSec:      300,
+		NetcheckTimeoutSec:       2,
+		NetcheckRetry:            2,
+		NetcheckRetryIntervalSec: 1,
+		NetcheckWANIface:         "wan",
+		NetcheckStartupWaitSec:   120,
+		NetcheckCooldownSec:      600,
+		NetcheckRecoverWaitSec:   120,
+		NetcheckPushOnRecover:    true,
 	}
 }
 
@@ -165,6 +196,41 @@ func normalize(cfg *Config) {
 	}
 	if cfg.NotifyListMax > 50 {
 		cfg.NotifyListMax = 50
+	}
+	if len(cfg.NetcheckHosts) == 0 {
+		cfg.NetcheckHosts = []string{
+			"connect.rom.miui.com",
+			"connectivitycheck.vivo.com.cn",
+			"connectivitycheck.platform.hicloud.com",
+			"conn1.oppomobile.com",
+		}
+	}
+	if len(cfg.NetcheckIPs) == 0 {
+		cfg.NetcheckIPs = []string{"223.5.5.5", "119.29.29.29"}
+	}
+	if cfg.NetcheckIntervalSec <= 0 {
+		cfg.NetcheckIntervalSec = 300
+	}
+	if cfg.NetcheckTimeoutSec <= 0 {
+		cfg.NetcheckTimeoutSec = 2
+	}
+	if cfg.NetcheckRetry <= 0 {
+		cfg.NetcheckRetry = 2
+	}
+	if cfg.NetcheckRetryIntervalSec <= 0 {
+		cfg.NetcheckRetryIntervalSec = 1
+	}
+	if cfg.NetcheckWANIface == "" {
+		cfg.NetcheckWANIface = "wan"
+	}
+	if cfg.NetcheckStartupWaitSec < 0 {
+		cfg.NetcheckStartupWaitSec = 0
+	}
+	if cfg.NetcheckCooldownSec <= 0 {
+		cfg.NetcheckCooldownSec = 600
+	}
+	if cfg.NetcheckRecoverWaitSec <= 0 {
+		cfg.NetcheckRecoverWaitSec = 120
 	}
 	norm := make(map[string]string, len(cfg.Aliases))
 	for k, v := range cfg.Aliases {
@@ -266,6 +332,23 @@ func loadUCI(cfg *Config) error {
 	flag("notify_list_enable", &cfg.NotifyListEnable)
 	atoi("notify_list_max", &cfg.NotifyListMax)
 
+	flag("netcheck_enable", &cfg.NetcheckEnable)
+	atoi("netcheck_interval_sec", &cfg.NetcheckIntervalSec)
+	atoi("netcheck_timeout_sec", &cfg.NetcheckTimeoutSec)
+	atoi("netcheck_retry", &cfg.NetcheckRetry)
+	atoi("netcheck_retry_interval_sec", &cfg.NetcheckRetryIntervalSec)
+	str("netcheck_wan_iface", &cfg.NetcheckWANIface)
+	atoi("netcheck_startup_wait_sec", &cfg.NetcheckStartupWaitSec)
+	atoi("netcheck_cooldown_sec", &cfg.NetcheckCooldownSec)
+	atoi("netcheck_recover_wait_sec", &cfg.NetcheckRecoverWaitSec)
+	flag("netcheck_push_on_recover", &cfg.NetcheckPushOnRecover)
+	if hosts := list("netcheck_hosts"); len(hosts) > 0 {
+		cfg.NetcheckHosts = hosts
+	}
+	if ips := list("netcheck_ips"); len(ips) > 0 {
+		cfg.NetcheckIPs = ips
+	}
+
 	cfg.RegularTime = nil
 	for _, key := range []string{"regular_time", "regular_time_2", "regular_time_3"} {
 		if v := get(key); v != "" {
@@ -296,6 +379,7 @@ func parseUCIFile(path string, cfg *Config) error {
 	if err != nil {
 		return err
 	}
+	hostsReset, ipsReset := false, false
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "option ") && !strings.HasPrefix(line, "list ") {
@@ -352,6 +436,52 @@ func parseUCIFile(path string, cfg *Config) error {
 			if n, e := strconv.Atoi(val); e == nil {
 				cfg.NotifyListMax = n
 			}
+		case fields[0] == "option" && key == "netcheck_enable":
+			cfg.NetcheckEnable = val == "1"
+		case fields[0] == "option" && key == "netcheck_interval_sec":
+			if n, e := strconv.Atoi(val); e == nil {
+				cfg.NetcheckIntervalSec = n
+			}
+		case fields[0] == "option" && key == "netcheck_timeout_sec":
+			if n, e := strconv.Atoi(val); e == nil {
+				cfg.NetcheckTimeoutSec = n
+			}
+		case fields[0] == "option" && key == "netcheck_retry":
+			if n, e := strconv.Atoi(val); e == nil {
+				cfg.NetcheckRetry = n
+			}
+		case fields[0] == "option" && key == "netcheck_retry_interval_sec":
+			if n, e := strconv.Atoi(val); e == nil {
+				cfg.NetcheckRetryIntervalSec = n
+			}
+		case fields[0] == "option" && key == "netcheck_wan_iface":
+			cfg.NetcheckWANIface = val
+		case fields[0] == "option" && key == "netcheck_startup_wait_sec":
+			if n, e := strconv.Atoi(val); e == nil {
+				cfg.NetcheckStartupWaitSec = n
+			}
+		case fields[0] == "option" && key == "netcheck_cooldown_sec":
+			if n, e := strconv.Atoi(val); e == nil {
+				cfg.NetcheckCooldownSec = n
+			}
+		case fields[0] == "option" && key == "netcheck_recover_wait_sec":
+			if n, e := strconv.Atoi(val); e == nil {
+				cfg.NetcheckRecoverWaitSec = n
+			}
+		case fields[0] == "option" && key == "netcheck_push_on_recover":
+			cfg.NetcheckPushOnRecover = val == "1"
+		case fields[0] == "list" && key == "netcheck_hosts":
+			if !hostsReset {
+				cfg.NetcheckHosts = nil
+				hostsReset = true
+			}
+			cfg.NetcheckHosts = append(cfg.NetcheckHosts, val)
+		case fields[0] == "list" && key == "netcheck_ips":
+			if !ipsReset {
+				cfg.NetcheckIPs = nil
+				ipsReset = true
+			}
+			cfg.NetcheckIPs = append(cfg.NetcheckIPs, val)
 		case fields[0] == "option" && (key == "regular_time" || key == "regular_time_2" || key == "regular_time_3"):
 			if n, e := strconv.Atoi(val); e == nil && n >= 0 && n <= 23 {
 				cfg.RegularTime = append(cfg.RegularTime, n)

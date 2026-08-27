@@ -33,37 +33,64 @@ return view.extend({
 	render: function (data) {
 		var running = data[0];
 		var raw = data[1] || '';
-		var status = { running: running, version: '-', devices: [] };
+		var status = { running: running, version: '-', devices: [], netcheck: {} };
 
 		if (raw) {
 			try {
 				var parsed = JSON.parse(raw);
 				status.version = parsed.version || '-';
 				status.devices = parsed.devices || [];
+				status.netcheck = parsed.netcheck || {};
 			} catch (e) {
 				status.devices = [];
 			}
 		}
 
+		var nc = status.netcheck || {};
 		var header = E('div', { 'class': 'cbi-section' }, [
-			E('h3', _('Service status')),
+			E('h3', _('服务状态')),
 			E('p', {}, [
-				_('Running') + ': ',
+				_('运行中') + ': ',
 				E('strong', {
 					'style': running ? 'color:green' : 'color:red'
-				}, running ? _('yes') : _('no')),
+				}, running ? _('是') : _('否')),
 				' · ',
-				_('Version') + ': ' + status.version
+				_('版本') + ': ' + status.version
+			])
+		]);
+
+		var netcheckBox = E('div', { 'class': 'cbi-section' }, [
+			E('h3', _('网络检测')),
+			E('p', {}, [
+				_('启用') + ': ' + (nc.enabled ? _('是') : _('否')),
+				' · ',
+				_('连通') + ': ',
+				E('strong', {
+					'style': nc.ok ? 'color:green' : 'color:orange'
+				}, nc.enabled ? (nc.ok ? _('正常') : _('异常/未知')) : '-'),
+			]),
+			E('p', {}, [
+				_('最近动作') + ': ' + (nc.last_action || '-'),
+				' · ',
+				_('WAN IP') + ': ' + (nc.wan_ip || '-'),
+			]),
+			E('p', {}, [
+				_('负载') + ': ' + (nc.loadavg || '-'),
+				' · ',
+				_('运行时长') + ': ' + (nc.uptime || '-'),
+			]),
+			E('p', {}, [
+				_('详情') + ': ' + (nc.last_detail || '-')
 			])
 		]);
 
 		var rows = [
 			E('tr', { 'class': 'tr table-titles' }, [
-				E('th', { 'class': 'th' }, _('Name')),
+				E('th', { 'class': 'th' }, _('名称')),
 				E('th', { 'class': 'th' }, _('MAC')),
 				E('th', { 'class': 'th' }, _('IP')),
-				E('th', { 'class': 'th' }, _('Iface')),
-				E('th', { 'class': 'th' }, _('State'))
+				E('th', { 'class': 'th' }, _('接口')),
+				E('th', { 'class': 'th' }, _('状态'))
 			])
 		];
 
@@ -80,16 +107,16 @@ return view.extend({
 		if ((status.devices || []).length === 0) {
 			rows.push(E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td', 'colspan': 5 },
-					_('No device state yet. Enable the service and wait for neighbour / DHCP events.'))
+					_('暂无设备状态。请启用服务并等待邻居 / DHCP 事件。'))
 			]));
 		}
 
 		var table = E('div', { 'class': 'cbi-section' }, [
-			E('h3', _('Devices')),
+			E('h3', _('局域网设备')),
 			E('table', { 'class': 'table' }, rows)
 		]);
 
-		return E('div', {}, [ header, table ]);
+		return E('div', {}, [ header, netcheckBox, table ]);
 	},
 
 	handleSaveApply: null,

@@ -85,13 +85,24 @@ LuCI：`服务` → `NetNotify`。
 
 脚本从 IEEE 下载 OUI，按常见消费电子/IoT 厂商关键词过滤后写回。构建 ipk **不强制联网**。
 
+## 网络检测（WAN 看门狗）
+
+将原 `network_check.sh` 逻辑内置：
+
+1. 依次请求配置的 `generate_204` 主机  
+2. 全部失败则探测备用 IP（默认 223.5.5.5 / 119.29.29.29）  
+3. 仍失败则 `/sbin/ifup <wan>`（有冷却时间）  
+4. 恢复后可选推送：WAN IP、在线设备数、负载、启动时间、运行时长  
+
+LuCI：`服务` → `网络通知` → `网络检测`。
+
 ## Release
 
 打 tag 会触发发布多架构二进制：
 
 ```bash
-git tag v0.2.2
-git push origin v0.2.2
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 ## 说明

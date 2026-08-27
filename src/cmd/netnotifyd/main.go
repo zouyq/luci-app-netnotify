@@ -62,8 +62,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
-	if !cfg.Enable {
-		fmt.Println("netnotify disabled in config; exiting")
+	if !cfg.Enable && !cfg.NetcheckEnable {
+		fmt.Println("netnotify disabled (enable=0 and netcheck_enable=0); exiting")
 		return
 	}
 

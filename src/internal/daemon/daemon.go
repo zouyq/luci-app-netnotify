@@ -16,6 +16,7 @@ import (
 	"github.com/zouyq/netnotify/internal/device"
 	"github.com/zouyq/netnotify/internal/leases"
 	"github.com/zouyq/netnotify/internal/neigh"
+	"github.com/zouyq/netnotify/internal/netcheck"
 	"github.com/zouyq/netnotify/internal/nlog"
 	"github.com/zouyq/netnotify/internal/notify"
 	"github.com/zouyq/netnotify/internal/oui"
@@ -39,6 +40,11 @@ type Daemon struct {
 	cronMu      sync.Mutex
 	lastCronKey string
 	lastCronAt  time.Time
+
+	netChecker          *netcheck.Checker
+	netcheckMu          sync.Mutex
+	netcheckStatus      NetcheckStatus
+	netcheckLastRestart time.Time
 }
 
 func New(cfg config.Config, log *nlog.Logger) (*Daemon, error) {
@@ -55,13 +61,17 @@ func New(cfg config.Config, log *nlog.Logger) (*Daemon, error) {
 		}
 	}
 	return &Daemon{
-		cfg:    cfg,
-		log:    log,
-		store:  device.NewStore(),
-		leases: leases.New(cfg.DHCPLeasesPath),
-		pool:   probe.NewPool(probe.New(), cfg.ProbeMaxParallel),
-		sender: sender,
-		ouiDB:  db,
+		cfg:        cfg,
+		log:        log,
+		store:      device.NewStore(),
+		leases:     leases.New(cfg.DHCPLeasesPath),
+		pool:       probe.NewPool(probe.New(), cfg.ProbeMaxParallel),
+		sender:     sender,
+		ouiDB:      db,
+		netChecker: netcheck.New(),
+		netcheckStatus: NetcheckStatus{
+			Enabled: cfg.NetcheckEnable,
+		},
 		params: device.Params{
 			OfflineFailCount:  cfg.OfflineFailCount,
 			SuspectTimeoutSec: cfg.SuspectTimeoutSec,
@@ -87,30 +97,45 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.loadState()
 
 	evCh := make(chan neigh.Event, 64)
-	w := neigh.NewWatcher()
-	// Load DHCP names before neighbour dump so first online events get hostnames.
-	d.pollLeases(ctx)
-	if snap, err := w.Dump(); err == nil {
-		for _, ev := range snap {
-			d.handleNeigh(ctx, ev)
+	if d.cfg.Enable {
+		w := neigh.NewWatcher()
+		// Load DHCP names before neighbour dump so first online events get hostnames.
+		d.pollLeases(ctx)
+		if snap, err := w.Dump(); err == nil {
+			for _, ev := range snap {
+				d.handleNeigh(ctx, ev)
+			}
+		} else {
+			d.log.Debugf("neigh dump: %v", err)
 		}
+		go func() {
+			if err := w.Watch(ctx, evCh); err != nil && ctx.Err() == nil {
+				d.log.Errorf("neigh watch: %v", err)
+			}
+		}()
 	} else {
-		d.log.Debugf("neigh dump: %v", err)
+		d.log.Infof("device watch disabled (enable=0)")
 	}
-	go func() {
-		if err := w.Watch(ctx, evCh); err != nil && ctx.Err() == nil {
-			d.log.Errorf("neigh watch: %v", err)
-		}
-	}()
+	go d.runNetcheckLoop(ctx)
 
-	leaseTick := time.NewTicker(time.Duration(d.cfg.LeasePollSec) * time.Second)
-	defer leaseTick.Stop()
-	stateTick := time.NewTicker(5 * time.Second)
+	var leaseTick, stateTick, suspectTick, cronTick *time.Ticker
+	if d.cfg.Enable {
+		leaseTick = time.NewTicker(time.Duration(d.cfg.LeasePollSec) * time.Second)
+		defer leaseTick.Stop()
+		suspectTick = time.NewTicker(5 * time.Second)
+		defer suspectTick.Stop()
+		cronTick = time.NewTicker(30 * time.Second)
+		defer cronTick.Stop()
+	}
+	stateTick = time.NewTicker(5 * time.Second)
 	defer stateTick.Stop()
-	suspectTick := time.NewTicker(5 * time.Second)
-	defer suspectTick.Stop()
-	cronTick := time.NewTicker(30 * time.Second)
-	defer cronTick.Stop()
+
+	var leaseC, suspectC, cronC <-chan time.Time
+	if leaseTick != nil {
+		leaseC = leaseTick.C
+		suspectC = suspectTick.C
+		cronC = cronTick.C
+	}
 
 	for {
 		select {
@@ -119,14 +144,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return ctx.Err()
 		case ev := <-evCh:
 			d.handleNeigh(ctx, ev)
-		case <-leaseTick.C:
+		case <-leaseC:
 			d.pollLeases(ctx)
 		case <-stateTick.C:
 			d.writeState()
 			d.trimLog()
-		case <-suspectTick.C:
+		case <-suspectC:
 			d.tickSuspect(ctx)
-		case <-cronTick.C:
+		case <-cronC:
 			d.tickCron(ctx)
 		}
 	}
@@ -488,14 +513,16 @@ func (d *Daemon) loadState() {
 
 func (d *Daemon) writeState() {
 	type status struct {
-		Running bool            `json:"running"`
-		Version string          `json:"version"`
-		Devices []device.Device `json:"devices"`
+		Running  bool            `json:"running"`
+		Version  string          `json:"version"`
+		Devices  []device.Device `json:"devices"`
+		Netcheck NetcheckStatus  `json:"netcheck"`
 	}
 	st := status{
-		Running: true,
-		Version: config.Version,
-		Devices: d.store.Snapshot(),
+		Running:  true,
+		Version:  config.Version,
+		Devices:  d.store.Snapshot(),
+		Netcheck: d.snapshotNetcheck(),
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {

@@ -1,6 +1,6 @@
 {
 	"admin/services/netnotify": {
-		"title": "NetNotify",
+		"title": "网络通知",
 		"order": 60,
 		"action": {
 			"type": "firstchild"
@@ -11,16 +11,24 @@
 		}
 	},
 	"admin/services/netnotify/settings": {
-		"title": "Settings",
+		"title": "基本设置",
 		"order": 1,
 		"action": {
 			"type": "view",
 			"path": "netnotify/settings"
 		}
 	},
-	"admin/services/netnotify/status": {
-		"title": "Status",
+	"admin/services/netnotify/netcheck": {
+		"title": "网络检测",
 		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "netnotify/netcheck"
+		}
+	},
+	"admin/services/netnotify/status": {
+		"title": "运行状态",
+		"order": 3,
 		"action": {
 			"type": "view",
 			"path": "netnotify/status"
