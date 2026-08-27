@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const Version = "0.3.0"
+const Version = "0.3.1"
 
 // Config holds runtime settings for netnotifyd.
 type Config struct {
