@@ -52,10 +52,19 @@ func TestFormatDeviceOfflineWithList(t *testing.T) {
 	if !strings.Contains(msg.Content, "当前在线 (3):") {
 		t.Fatal(msg.Content)
 	}
-	idxPhone := strings.Index(msg.Content, "iPhone")
-	idxHome := strings.Index(msg.Content, "home-as")
+	if !strings.Contains(list, "IP") || !strings.Contains(list, "时长") {
+		t.Fatal(list)
+	}
+	// Column order: IP first on data rows
+	lines := strings.Split(list, "\n")
+	if len(lines) < 3 || !strings.HasPrefix(strings.TrimSpace(lines[2]), "10.0.0.") {
+		t.Fatalf("expect IP-first rows:\n%s", list)
+	}
+	// short → long: iPhone before home-as
+	idxPhone := strings.Index(list, "iPhone")
+	idxHome := strings.Index(list, "home-as")
 	if idxPhone < 0 || idxHome < 0 || idxPhone > idxHome {
-		t.Fatalf("sort short→long failed:\n%s", msg.Content)
+		t.Fatalf("sort short→long failed:\n%s", list)
 	}
 }
 

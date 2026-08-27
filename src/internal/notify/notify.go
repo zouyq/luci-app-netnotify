@@ -347,12 +347,12 @@ type OnlineListItem struct {
 }
 
 const (
-	nameColWidth = 12
-	ipColWidth   = 15
+	ipColWidth  = 15
+	durColWidth = 10 // fits e.g. "12天12小时"
 )
 
 // FormatOnlineList builds an aligned online-device table.
-// Sort is ascending by online duration (short → long). Max caps shown rows.
+// Columns: IP | duration (fixed width) | name. Sort: short → long uptime.
 func FormatOnlineList(items []OnlineListItem, now time.Time, max int) string {
 	if max <= 0 {
 		max = 15
@@ -365,7 +365,9 @@ func FormatOnlineList(items []OnlineListItem, now time.Time, max int) string {
 	for _, it := range items {
 		since := it.OnlineSince
 		if since.IsZero() {
-			since = now
+			// Unknown start → show 0分 rather than inventing from last_seen.
+			rows = append(rows, row{item: it, dur: 0})
+			continue
 		}
 		rows = append(rows, row{item: it, dur: now.Sub(since)})
 	}
@@ -379,11 +381,11 @@ func FormatOnlineList(items []OnlineListItem, now time.Time, max int) string {
 	total := len(rows)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("当前在线 (%d):\n", total))
-	b.WriteString(padDisplay("名称", nameColWidth))
-	b.WriteByte(' ')
 	b.WriteString(padDisplay("IP", ipColWidth))
 	b.WriteByte(' ')
-	b.WriteString("时长\n")
+	b.WriteString(padDisplay("时长", durColWidth))
+	b.WriteByte(' ')
+	b.WriteString("名称\n")
 
 	limit := total
 	if limit > max {
@@ -391,11 +393,15 @@ func FormatOnlineList(items []OnlineListItem, now time.Time, max int) string {
 	}
 	for i := 0; i < limit; i++ {
 		r := rows[i]
-		b.WriteString(padDisplay(truncateDisplay(r.item.Name, nameColWidth), nameColWidth))
-		b.WriteByte(' ')
+		name := r.item.Name
+		if name == "" {
+			name = "unknown"
+		}
 		b.WriteString(padDisplay(r.item.IP, ipColWidth))
 		b.WriteByte(' ')
-		b.WriteString(FormatDuration(r.dur))
+		b.WriteString(padDisplay(FormatDuration(r.dur), durColWidth))
+		b.WriteByte(' ')
+		b.WriteString(name)
 		b.WriteByte('\n')
 	}
 	if total > max {
@@ -438,29 +444,6 @@ func displayWidth(s string) int {
 		}
 	}
 	return w
-}
-
-func truncateDisplay(s string, width int) string {
-	if displayWidth(s) <= width {
-		return s
-	}
-	const ellipsis = "…"
-	ew := displayWidth(ellipsis)
-	var b strings.Builder
-	w := 0
-	for _, r := range s {
-		rw := 1
-		if r > 127 {
-			rw = 2
-		}
-		if w+rw+ew > width {
-			break
-		}
-		b.WriteRune(r)
-		w += rw
-	}
-	b.WriteString(ellipsis)
-	return b.String()
 }
 
 func padDisplay(s string, width int) string {

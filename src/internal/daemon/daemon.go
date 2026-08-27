@@ -84,6 +84,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.log.Infof("netnotifyd %s starting (%s)", config.Version, d.cfg.String())
 
 	_ = os.MkdirAll(filepath.Dir(d.cfg.StateFile), 0755)
+	d.loadState()
 
 	evCh := make(chan neigh.Event, 64)
 	w := neigh.NewWatcher()
@@ -417,9 +418,6 @@ func (d *Daemon) push(ctx context.Context, action, mac, ip, name, iface string) 
 		var since time.Time
 		d.store.Update(mac, func(dev *device.Device) {
 			since = dev.OnlineSince
-			if since.IsZero() {
-				since = dev.LastSeen
-			}
 		})
 		if !since.IsZero() {
 			opts.OnlineDuration = notify.FormatDuration(now.Sub(since))
@@ -453,10 +451,6 @@ func (d *Daemon) formatOnlineList(now time.Time, excludeMAC string) string {
 		if excludeMAC != "" && config.NormalizeMAC(snap.MAC) == excludeMAC {
 			continue
 		}
-		since := snap.OnlineSince
-		if since.IsZero() {
-			since = snap.LastSeen
-		}
 		name := snap.Name
 		if name == "" {
 			name = "unknown"
@@ -464,10 +458,32 @@ func (d *Daemon) formatOnlineList(now time.Time, excludeMAC string) string {
 		items = append(items, notify.OnlineListItem{
 			Name:        name,
 			IP:          snap.IP,
-			OnlineSince: since,
+			OnlineSince: snap.OnlineSince,
 		})
 	}
 	return notify.FormatOnlineList(items, now, d.cfg.NotifyListMax)
+}
+
+func (d *Daemon) loadState() {
+	path := d.cfg.StateFile
+	if path == "" {
+		return
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var st struct {
+		Devices []device.Device `json:"devices"`
+	}
+	if err := json.Unmarshal(b, &st); err != nil {
+		d.log.Debugf("state load: %v", err)
+		return
+	}
+	n := d.store.Restore(st.Devices)
+	if n > 0 {
+		d.log.Infof("restored %d devices from %s", n, path)
+	}
 }
 
 func (d *Daemon) writeState() {

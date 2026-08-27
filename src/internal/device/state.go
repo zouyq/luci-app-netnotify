@@ -40,8 +40,8 @@ type Device struct {
 	OnlineSince time.Time `json:"online_since,omitempty"`
 	SuspectAt   time.Time `json:"suspect_at,omitempty"`
 	UpdatedAt   time.Time `json:"updated_at"`
-	NotifiedUp  bool      `json:"-"`
-	NotifiedOff bool      `json:"-"`
+	NotifiedUp  bool      `json:"notified_up"`
+	NotifiedOff bool      `json:"notified_off"`
 }
 
 // Transition is the result of applying an event.
@@ -225,6 +225,37 @@ func (s *Store) Snapshot() []Device {
 		out = append(out, *d)
 	}
 	return out
+}
+
+// Restore loads persisted devices. Online/suspect hosts keep OnlineSince and
+// are marked already-notified so a daemon restart does not re-push or reset uptime.
+func (s *Store) Restore(devs []Device) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, in := range devs {
+		if in.MAC == "" {
+			continue
+		}
+		d := in
+		switch d.State {
+		case StateOnline, StateSuspect:
+			d.NotifiedUp = true
+			d.NotifiedOff = false
+			if d.OnlineSince.IsZero() && !d.LastSeen.IsZero() {
+				// Bootstrap for states written before OnlineSince existed.
+				d.OnlineSince = d.LastSeen
+			}
+		case StateOffline:
+			d.NotifiedUp = false
+			d.NotifiedOff = true
+		default:
+			// pending_up / empty: leave notify flags as stored (usually false)
+		}
+		s.devs[d.MAC] = &d
+		n++
+	}
+	return n
 }
 
 func (s *Store) Lock()   { s.mu.Lock() }

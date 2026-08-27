@@ -143,3 +143,30 @@ func TestReOnlineAfterOfflineNotifies(t *testing.T) {
 		t.Fatalf("got %s", d.State)
 	}
 }
+
+func TestRestoreKeepsOnlineSinceAndSuppressesRenotify(t *testing.T) {
+	since := time.Now().Add(-3 * time.Hour)
+	s := NewStore()
+	n := s.Restore([]Device{{
+		MAC:         "aa:bb:cc:dd:ee:10",
+		IP:          "10.0.0.10",
+		Name:        "phone",
+		State:       StateOnline,
+		OnlineSince: since,
+		LastSeen:    time.Now(),
+	}})
+	if n != 1 {
+		t.Fatalf("restored %d", n)
+	}
+	d, ok := s.Get("aa:bb:cc:dd:ee:10")
+	if !ok || !d.NotifiedUp || !d.OnlineSince.Equal(since) {
+		t.Fatalf("bad restore: %+v", d)
+	}
+	tr := ApplyEvent(d, EventWeakSeen, Params{OfflineFailCount: 3, SuspectTimeoutSec: 60}, time.Now())
+	if tr.BecameOnline {
+		t.Fatal("restored online must not re-notify")
+	}
+	if !d.OnlineSince.Equal(since) {
+		t.Fatal("OnlineSince must not reset on weak seen")
+	}
+}
