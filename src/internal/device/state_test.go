@@ -108,6 +108,21 @@ func TestSuspectProbeOKBackOnline(t *testing.T) {
 	_ = tr
 }
 
+func TestWeakSeenDoesNotRecoverSuspect(t *testing.T) {
+	d := &Device{MAC: "aa:bb:cc:dd:ee:09", State: StateSuspect, NotifiedUp: true, FailCount: 2, SuspectAt: time.Now()}
+	p := Params{OfflineFailCount: 3, SuspectTimeoutSec: 60}
+	tr := ApplyEvent(d, EventWeakSeen, p, time.Now())
+	if d.State != StateSuspect {
+		t.Fatalf("STALE must not recover suspect, got %s", d.State)
+	}
+	if d.FailCount != 2 {
+		t.Fatal("fail count must not reset on STALE while suspect")
+	}
+	if tr.BecameOffline {
+		t.Fatal("must not offline on STALE")
+	}
+}
+
 func TestPendingUpTimeoutNeedsProbe(t *testing.T) {
 	d := &Device{MAC: "aa:bb:cc:dd:ee:07", State: StatePendingUp}
 	p := Params{OfflineFailCount: 3, SuspectTimeoutSec: 60}

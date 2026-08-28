@@ -7,9 +7,11 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	_ "github.com/zouyq/netnotify/internal/tzutil" // load system TZ before time use
 )
 
-const Version = "0.3.1"
+const Version = "0.3.7"
 
 // Config holds runtime settings for netnotifyd.
 type Config struct {
@@ -80,9 +82,9 @@ func Defaults() Config {
 		DeviceName:        "OpenWrt",
 		Channel:           "webhook",
 		WebhookURL:        "",
-		SuspectTimeoutSec: 60,
+		SuspectTimeoutSec: 30,
 		ProbeMaxParallel:  2,
-		OfflineFailCount:  3,
+		OfflineFailCount:  2,
 		LeasePollSec:      30,
 		Debug:             false,
 		Aliases:           map[string]string{},
@@ -147,7 +149,7 @@ func Load(path string) (Config, error) {
 
 func normalize(cfg *Config) {
 	if cfg.SuspectTimeoutSec <= 0 {
-		cfg.SuspectTimeoutSec = 60
+		cfg.SuspectTimeoutSec = 30
 	}
 	if cfg.ProbeMaxParallel <= 0 {
 		cfg.ProbeMaxParallel = 2
@@ -156,7 +158,7 @@ func normalize(cfg *Config) {
 		cfg.ProbeMaxParallel = 2
 	}
 	if cfg.OfflineFailCount <= 0 {
-		cfg.OfflineFailCount = 3
+		cfg.OfflineFailCount = 2
 	}
 	if cfg.LeasePollSec <= 0 {
 		cfg.LeasePollSec = 30
@@ -196,6 +198,18 @@ func normalize(cfg *Config) {
 	}
 	if cfg.NotifyListMax > 50 {
 		cfg.NotifyListMax = 50
+	}
+	if len(cfg.RegularTime) > 0 {
+		seen := make(map[int]bool, len(cfg.RegularTime))
+		dedup := make([]int, 0, len(cfg.RegularTime))
+		for _, h := range cfg.RegularTime {
+			if h < 0 || h > 23 || seen[h] {
+				continue
+			}
+			seen[h] = true
+			dedup = append(dedup, h)
+		}
+		cfg.RegularTime = dedup
 	}
 	if len(cfg.NetcheckHosts) == 0 {
 		cfg.NetcheckHosts = []string{
@@ -566,6 +580,11 @@ func (c Config) ResolveName(mac, dhcpHost string, ouiLookup func(string) string)
 			return v
 		}
 	}
+	return MACFallbackName(mac)
+}
+
+// MACFallbackName is shown when no alias/DHCP/OUI name is available.
+func MACFallbackName(mac string) string {
 	return "unknown"
 }
 

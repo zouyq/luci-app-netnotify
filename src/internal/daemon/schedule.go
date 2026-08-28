@@ -63,7 +63,9 @@ func (d *Daemon) tickCron(ctx context.Context) {
 	defer cancel()
 	if err := d.sender.Send(cctx, msg); err != nil {
 		d.log.Errorf("cron send: %v", err)
+		return
 	}
+	d.writeState()
 }
 
 func (d *Daemon) buildCronMessage(now time.Time) notify.Message {

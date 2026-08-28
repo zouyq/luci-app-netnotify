@@ -30,10 +30,13 @@ func TestCheckGenerate204(t *testing.T) {
 }
 
 func TestFormatUptime(t *testing.T) {
-	if FormatUptime(90) != "1分" {
+	if FormatUptime(90) != "1m" {
 		t.Fatal(FormatUptime(90))
 	}
-	if FormatUptime(3700) != "1小时1分" {
+	if FormatUptime(3700) != "1h" {
 		t.Fatal(FormatUptime(3700))
+	}
+	if FormatUptime(90000) != "1d" {
+		t.Fatal(FormatUptime(90000))
 	}
 }

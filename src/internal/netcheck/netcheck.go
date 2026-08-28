@@ -283,21 +283,19 @@ func UptimeSec() int64 {
 	return int64(sec)
 }
 
-// FormatUptime humanizes seconds.
+// FormatUptime humanizes seconds with a single unit: Xd, Xh, or Xm.
 func FormatUptime(sec int64) string {
-	if sec < 60 {
-		return fmt.Sprintf("%d秒", sec)
+	if sec < 0 {
+		sec = 0
 	}
-	d := sec / 86400
-	h := (sec % 86400) / 3600
-	m := (sec % 3600) / 60
-	if d > 0 {
-		return fmt.Sprintf("%d天%d小时%d分", d, h, m)
+	totalMin := sec / 60
+	if totalMin >= 60*24 {
+		return fmt.Sprintf("%dd", totalMin/(60*24))
 	}
-	if h > 0 {
-		return fmt.Sprintf("%d小时%d分", h, m)
+	if totalMin >= 60 {
+		return fmt.Sprintf("%dh", totalMin/60)
 	}
-	return fmt.Sprintf("%d分", m)
+	return fmt.Sprintf("%dm", totalMin)
 }
 
 // BootTime approximates boot timestamp.

@@ -97,17 +97,13 @@ func ApplyEvent(d *Device, kind EventKind, p Params, now time.Time) Transition {
 		}
 
 	case EventWeakSeen:
-		// STALE/DELAY/PROBE: never force offline. Soft-confirm pending_up → online
-		// so we do not depend on ARP when neighbour table already knows the host.
+		// STALE/DELAY/PROBE: never force offline from online.
 		d.LastSeen = now
 		switch d.State {
 		case StateOnline:
 			// refresh only
 		case StateSuspect:
-			d.State = StateOnline
-			d.FailCount = 0
-			d.ProbeIndex = 0
-			d.SuspectAt = time.Time{}
+			// Stay suspect — do not let STALE cancel offline detection.
 		case StatePendingUp, StateOffline, "":
 			d.State = StateOnline
 			d.FailCount = 0
@@ -256,6 +252,17 @@ func (s *Store) Restore(devs []Device) int {
 		n++
 	}
 	return n
+}
+
+func (s *Store) MACByIP(ip string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for mac, d := range s.devs {
+		if d.IP == ip {
+			return mac, true
+		}
+	}
+	return "", false
 }
 
 func (s *Store) Lock()   { s.mu.Lock() }

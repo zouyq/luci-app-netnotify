@@ -43,13 +43,13 @@ func TestFormatDeviceOfflineWithList(t *testing.T) {
 		{Name: "midea_da_0270", IP: "10.0.0.34", OnlineSince: now.Add(-5*time.Hour - 20*time.Minute)},
 	}, now, 15)
 	msg := FormatDevice("home-jd", "下线", "64:41:e6:b9:bc:23", "10.0.0.18", "wangxiadeiPhone", "br-lan", FormatDeviceOpts{
-		OnlineDuration: "2小时15分",
+		OnlineDuration: "2h",
 		OnlineList:     list,
 	})
-	if !strings.Contains(msg.Content, "在线时长: 2小时15分") {
+	if !strings.Contains(msg.Content, "在线时长: 2h") {
 		t.Fatal(msg.Content)
 	}
-	if !strings.Contains(msg.Content, "当前在线 (3):") {
+	if !strings.Contains(msg.Content, "在线设备 (3):") {
 		t.Fatal(msg.Content)
 	}
 	if !strings.Contains(list, "IP") || !strings.Contains(list, "时长") {
@@ -70,16 +70,54 @@ func TestFormatDeviceOfflineWithList(t *testing.T) {
 
 func TestFormatDuration(t *testing.T) {
 	cases := map[time.Duration]string{
-		0:                             "0分",
-		5 * time.Minute:               "5分",
-		65 * time.Minute:              "1小时5分",
-		2 * time.Hour:                 "2小时",
-		26*time.Hour + 10*time.Minute: "1天2小时",
+		0:                             "0m",
+		5 * time.Minute:               "5m",
+		65 * time.Minute:              "1h",
+		2 * time.Hour:                 "2h",
+		26*time.Hour + 10*time.Minute: "1d",
+		49 * time.Hour:                "2d",
 	}
 	for d, want := range cases {
 		if got := FormatDuration(d); got != want {
 			t.Fatalf("%v: got %s want %s", d, got, want)
 		}
+	}
+}
+
+func TestFormatOnlineListNameTruncate(t *testing.T) {
+	now := time.Now()
+	long := "uplus-haier-0121-441b-v6-sapbz"
+	s := FormatOnlineList([]OnlineListItem{
+		{Name: long, IP: "10.0.0.17", OnlineSince: now.Add(-time.Hour)},
+	}, now, 15)
+	if strings.Contains(s, long) {
+		t.Fatalf("long name should be truncated:\n%s", s)
+	}
+	if !strings.Contains(s, "…") {
+		t.Fatalf("expect ellipsis:\n%s", s)
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) < 3 {
+		t.Fatal(s)
+	}
+	fields := strings.Fields(lines[2])
+	name := fields[len(fields)-1]
+	if displayWidth(name) > nameColWidth {
+		t.Fatalf("name column too wide %q (%d):\n%s", name, displayWidth(name), s)
+	}
+}
+
+func TestFormatOnlineListDedupeIP(t *testing.T) {
+	now := time.Now()
+	s := FormatOnlineList([]OnlineListItem{
+		{Name: "unknown", IP: "10.0.0.32", OnlineSince: now.Add(-11 * time.Hour)},
+		{Name: "linaro-alip", IP: "10.0.0.32", OnlineSince: now.Add(-10 * time.Hour)},
+	}, now, 15)
+	if strings.Count(s, "10.0.0.32") != 1 {
+		t.Fatalf("duplicate IP should collapse:\n%s", s)
+	}
+	if !strings.Contains(s, "linaro-a") {
+		t.Fatalf("prefer named entry:\n%s", s)
 	}
 }
 
@@ -94,7 +132,7 @@ func TestFormatOnlineListMax(t *testing.T) {
 		})
 	}
 	s := FormatOnlineList(items, now, 15)
-	if !strings.Contains(s, "当前在线 (18):") {
+	if !strings.Contains(s, "在线设备 (18):") {
 		t.Fatal(s)
 	}
 	if !strings.Contains(s, "… 共18台") {

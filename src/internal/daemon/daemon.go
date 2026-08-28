@@ -159,6 +159,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 func (d *Daemon) handleNeigh(ctx context.Context, ev neigh.Event) {
 	if len(ev.MAC) == 0 {
+		d.handleNeighIPOnly(ctx, ev)
 		return
 	}
 	// Ignore broadcast / multicast neighbours (NOARP rows, SSDP, etc.)
@@ -231,6 +232,52 @@ func (d *Daemon) handleNeigh(ctx context.Context, ev neigh.Event) {
 	}
 }
 
+// handleNeighIPOnly handles FAILED/DEL neighbour rows that have IP but no MAC
+// (common when a host leaves WiFi — kernel keeps FAILED without lladdr).
+func (d *Daemon) handleNeighIPOnly(ctx context.Context, ev neigh.Event) {
+	if ev.IP == nil || (!ev.Deleted && ev.State != neigh.NUDFailed) {
+		return
+	}
+	if ev.IP.IsMulticast() || ev.IP.IsUnspecified() || ev.IP.Equal(net.IPv4bcast) {
+		return
+	}
+	if ip4 := ev.IP.To4(); ip4 != nil && ip4[3] == 255 {
+		return
+	}
+	if ev.Iface != "" && (skipIface(ev.Iface) || !d.ifaceAllowed(ev.Iface)) {
+		return
+	}
+	mac, ok := d.store.MACByIP(ev.IP.String())
+	if !ok || !d.cfg.Allowed(mac) {
+		return
+	}
+	now := time.Now()
+	host := d.leases.LookupHostname(mac)
+	name := d.resolveName(mac, host)
+
+	d.store.Lock()
+	dev := d.store.GetOrCreateUnsafe(mac)
+	if ev.Iface != "" {
+		dev.Iface = ev.Iface
+	}
+	dev.Name = name
+	tr := device.ApplyEvent(dev, device.EventFailed, d.params, now)
+	needProbe := tr.NeedProbe
+	becameOffline := tr.BecameOffline
+	ip, iface, dname := dev.IP, dev.Iface, dev.Name
+	state := dev.State
+	d.store.Unlock()
+
+	d.log.Debugf("neigh ip-only failed ip=%s mac=%s -> %s", ev.IP, mac, state)
+
+	if becameOffline {
+		d.push(ctx, "下线", mac, ip, dname, iface)
+	}
+	if needProbe && (state == device.StatePendingUp || state == device.StateSuspect) {
+		d.scheduleProbe(ctx, mac)
+	}
+}
+
 func (d *Daemon) pollLeases(ctx context.Context) {
 	news, err := d.leases.Refresh()
 	if err != nil {
@@ -249,8 +296,7 @@ func (d *Daemon) pollLeases(ctx context.Context) {
 			dev.Name = name
 			switch dev.State {
 			case device.StateOnline:
-				// refresh presence soft hint
-				_ = device.ApplyEvent(dev, device.EventStrongUp, d.params, time.Now())
+				// DHCP lease is not proof of presence; keep LastSeen from neigh/probe.
 			case device.StateSuspect:
 				needProbe = true
 			default:
@@ -267,11 +313,36 @@ func (d *Daemon) pollLeases(ctx context.Context) {
 
 func (d *Daemon) tickSuspect(ctx context.Context) {
 	now := time.Now()
+	staleAfter := time.Duration(d.cfg.SuspectTimeoutSec) * time.Second
+	if staleAfter <= 0 {
+		staleAfter = 60 * time.Second
+	}
 	for _, snap := range d.store.Snapshot() {
+		mac := snap.MAC
+		if snap.State == device.StateOnline {
+			if snap.LastSeen.IsZero() || now.Sub(snap.LastSeen) < staleAfter {
+				continue
+			}
+			var needProbe, becameOffline bool
+			var ip, iface, name string
+			d.store.Update(mac, func(dev *device.Device) {
+				tr := device.ApplyEvent(dev, device.EventFailed, d.params, now)
+				needProbe = tr.NeedProbe
+				becameOffline = tr.BecameOffline
+				ip, iface, name = dev.IP, dev.Iface, dev.Name
+			})
+			d.log.Debugf("stale online mac=%s ip=%s last_seen=%s", mac, ip, snap.LastSeen)
+			if becameOffline {
+				d.push(ctx, "下线", mac, ip, name, iface)
+			}
+			if needProbe {
+				d.scheduleProbe(ctx, mac)
+			}
+			continue
+		}
 		if snap.State != device.StateSuspect && snap.State != device.StatePendingUp {
 			continue
 		}
-		mac := snap.MAC
 		var needProbe, becameOffline bool
 		var ip, iface, name string
 		d.store.Update(mac, func(dev *device.Device) {
@@ -447,7 +518,7 @@ func (d *Daemon) push(ctx context.Context, action, mac, ip, name, iface string) 
 		if !since.IsZero() {
 			opts.OnlineDuration = notify.FormatDuration(now.Sub(since))
 		} else {
-			opts.OnlineDuration = "0分"
+			opts.OnlineDuration = "0m"
 		}
 	}
 	if d.cfg.NotifyListEnable {
@@ -499,7 +570,9 @@ func (d *Daemon) loadState() {
 		return
 	}
 	var st struct {
-		Devices []device.Device `json:"devices"`
+		Devices     []device.Device `json:"devices"`
+		LastCronKey string          `json:"last_cron_key"`
+		LastCronAt  time.Time       `json:"last_cron_at"`
 	}
 	if err := json.Unmarshal(b, &st); err != nil {
 		d.log.Debugf("state load: %v", err)
@@ -509,20 +582,35 @@ func (d *Daemon) loadState() {
 	if n > 0 {
 		d.log.Infof("restored %d devices from %s", n, path)
 	}
+	if st.LastCronKey != "" {
+		d.cronMu.Lock()
+		d.lastCronKey = st.LastCronKey
+		d.lastCronAt = st.LastCronAt
+		d.cronMu.Unlock()
+		d.log.Debugf("restored cron key %s", st.LastCronKey)
+	}
 }
 
 func (d *Daemon) writeState() {
 	type status struct {
-		Running  bool            `json:"running"`
-		Version  string          `json:"version"`
-		Devices  []device.Device `json:"devices"`
-		Netcheck NetcheckStatus  `json:"netcheck"`
+		Running     bool            `json:"running"`
+		Version     string          `json:"version"`
+		Devices     []device.Device `json:"devices"`
+		Netcheck    NetcheckStatus  `json:"netcheck"`
+		LastCronKey string          `json:"last_cron_key,omitempty"`
+		LastCronAt  time.Time       `json:"last_cron_at,omitempty"`
 	}
+	d.cronMu.Lock()
+	lastKey := d.lastCronKey
+	lastAt := d.lastCronAt
+	d.cronMu.Unlock()
 	st := status{
-		Running:  true,
-		Version:  config.Version,
-		Devices:  d.store.Snapshot(),
-		Netcheck: d.snapshotNetcheck(),
+		Running:     true,
+		Version:     config.Version,
+		Devices:     d.store.Snapshot(),
+		Netcheck:    d.snapshotNetcheck(),
+		LastCronKey: lastKey,
+		LastCronAt:  lastAt,
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {

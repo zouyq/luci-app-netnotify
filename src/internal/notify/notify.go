@@ -323,7 +323,7 @@ type FormatDeviceOpts struct {
 func FormatDevice(deviceName, action string, mac, ip, name, iface string, opts FormatDeviceOpts) Message {
 	title := fmt.Sprintf("[%s] 设备%s", deviceName, action)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("名称: %s\nMAC: %s\nIP: %s\n接口: %s\n", name, mac, ip, iface))
+	b.WriteString(fmt.Sprintf("名称: %s\nMAC: %s\nIP: %s\n接口: %s\n", truncateDisplay(name, nameColWidth), mac, ip, iface))
 	if action == "下线" && opts.OnlineDuration != "" {
 		b.WriteString("在线时长: ")
 		b.WriteString(opts.OnlineDuration)
@@ -346,9 +346,15 @@ type OnlineListItem struct {
 	OnlineSince time.Time
 }
 
+type onlineListRow struct {
+	item OnlineListItem
+	dur  time.Duration
+}
+
 const (
-	ipColWidth  = 15
-	durColWidth = 10 // fits e.g. "12天12小时"
+	ipColWidth   = 11 // fits 10.0.0.255
+	durColWidth  = 4  // e.g. 46d, 12h, 5m
+	nameColWidth = 10 // truncate long DHCP/OUI names for compact one-line rows
 )
 
 // FormatOnlineList builds an aligned online-device table.
@@ -357,20 +363,17 @@ func FormatOnlineList(items []OnlineListItem, now time.Time, max int) string {
 	if max <= 0 {
 		max = 15
 	}
-	type row struct {
-		item OnlineListItem
-		dur  time.Duration
-	}
-	rows := make([]row, 0, len(items))
+	rows := make([]onlineListRow, 0, len(items))
 	for _, it := range items {
 		since := it.OnlineSince
 		if since.IsZero() {
-			// Unknown start → show 0分 rather than inventing from last_seen.
-			rows = append(rows, row{item: it, dur: 0})
+			// Unknown start → show 0m rather than inventing from last_seen.
+			rows = append(rows, onlineListRow{item: it, dur: 0})
 			continue
 		}
-		rows = append(rows, row{item: it, dur: now.Sub(since)})
+		rows = append(rows, onlineListRow{item: it, dur: now.Sub(since)})
 	}
+	rows = dedupeRowsByIP(rows)
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].dur == rows[j].dur {
 			return rows[i].item.IP < rows[j].item.IP
@@ -380,12 +383,13 @@ func FormatOnlineList(items []OnlineListItem, now time.Time, max int) string {
 
 	total := len(rows)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("当前在线 (%d):\n", total))
+	b.WriteString(fmt.Sprintf("在线设备 (%d):\n", total))
 	b.WriteString(padDisplay("IP", ipColWidth))
 	b.WriteByte(' ')
 	b.WriteString(padDisplay("时长", durColWidth))
 	b.WriteByte(' ')
-	b.WriteString("名称\n")
+	b.WriteString(fitDisplay("名称", nameColWidth))
+	b.WriteByte('\n')
 
 	limit := total
 	if limit > max {
@@ -401,7 +405,7 @@ func FormatOnlineList(items []OnlineListItem, now time.Time, max int) string {
 		b.WriteByte(' ')
 		b.WriteString(padDisplay(FormatDuration(r.dur), durColWidth))
 		b.WriteByte(' ')
-		b.WriteString(name)
+		b.WriteString(fitDisplay(name, nameColWidth))
 		b.WriteByte('\n')
 	}
 	if total > max {
@@ -410,28 +414,56 @@ func FormatOnlineList(items []OnlineListItem, now time.Time, max int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// FormatDuration renders duration as "x天x小时", "x小时x分", or "x分".
+// FormatDuration renders a single unit: Xd, Xh, or Xm (largest applicable).
 func FormatDuration(d time.Duration) string {
 	if d < 0 {
 		d = 0
 	}
 	totalMin := int(d / time.Minute)
-	if totalMin < 60 {
-		return fmt.Sprintf("%d分", totalMin)
+	if totalMin >= 60*24 {
+		return fmt.Sprintf("%dd", totalMin/(60*24))
 	}
-	days := totalMin / (60 * 24)
-	hours := (totalMin % (60 * 24)) / 60
-	mins := totalMin % 60
-	if days > 0 {
-		if hours > 0 {
-			return fmt.Sprintf("%d天%d小时", days, hours)
+	if totalMin >= 60 {
+		return fmt.Sprintf("%dh", totalMin/60)
+	}
+	return fmt.Sprintf("%dm", totalMin)
+}
+
+func isUnknownName(name string) bool {
+	return name == "" || name == "unknown"
+}
+
+func dedupeRowsByIP(rows []onlineListRow) []onlineListRow {
+	if len(rows) <= 1 {
+		return rows
+	}
+	best := make(map[string]onlineListRow, len(rows))
+	for _, r := range rows {
+		ip := r.item.IP
+		if ip == "" {
+			continue
 		}
-		return fmt.Sprintf("%d天", days)
+		prev, ok := best[ip]
+		if !ok {
+			best[ip] = r
+			continue
+		}
+		if isUnknownName(prev.item.Name) && !isUnknownName(r.item.Name) {
+			best[ip] = r
+			continue
+		}
+		if !isUnknownName(prev.item.Name) && isUnknownName(r.item.Name) {
+			continue
+		}
+		if r.dur > prev.dur {
+			best[ip] = r
+		}
 	}
-	if mins > 0 {
-		return fmt.Sprintf("%d小时%d分", hours, mins)
+	out := make([]onlineListRow, 0, len(best))
+	for _, r := range best {
+		out = append(out, r)
 	}
-	return fmt.Sprintf("%d小时", hours)
+	return out
 }
 
 func displayWidth(s string) int {
@@ -452,4 +484,37 @@ func padDisplay(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-w)
+}
+
+func truncateDisplay(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if displayWidth(s) <= width {
+		return s
+	}
+	const suffix = "…"
+	suffixW := displayWidth(suffix)
+	budget := width - suffixW
+	if budget <= 0 {
+		return suffix
+	}
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := 1
+		if r > 127 {
+			rw = 2
+		}
+		if w+rw > budget {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + suffix
+}
+
+func fitDisplay(s string, width int) string {
+	return padDisplay(truncateDisplay(s, width), width)
 }
