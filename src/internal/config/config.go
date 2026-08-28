@@ -11,7 +11,7 @@ import (
 	_ "github.com/zouyq/netnotify/internal/tzutil" // load system TZ before time use
 )
 
-const Version = "0.3.7"
+const Version = "0.3.9"
 
 // Config holds runtime settings for netnotifyd.
 type Config struct {

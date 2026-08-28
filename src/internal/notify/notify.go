@@ -354,7 +354,7 @@ type onlineListRow struct {
 const (
 	ipColWidth   = 11 // fits 10.0.0.255
 	durColWidth  = 4  // e.g. 46d, 12h, 5m
-	nameColWidth = 10 // truncate long DHCP/OUI names for compact one-line rows
+	nameColWidth = 12 // truncate long DHCP/OUI names for compact one-line rows
 )
 
 // FormatOnlineList builds an aligned online-device table.

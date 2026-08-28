@@ -68,9 +68,13 @@ func (a *ARPProber) Probe(ctx context.Context, iface string, srcIP, dstIP net.IP
 	case <-ctx.Done():
 		return false, ctx.Err()
 	case err := <-done:
-		if err != nil {
-			return false, err
+		if err == nil {
+			return true, nil
 		}
-		return true, nil
+		// Mobile devices in power-save often drop ARP but still answer ping.
+		if PingIP(ctx, dstIP) {
+			return true, nil
+		}
+		return false, err
 	}
 }

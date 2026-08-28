@@ -323,6 +323,13 @@ func (d *Daemon) tickSuspect(ctx context.Context) {
 			if snap.LastSeen.IsZero() || now.Sub(snap.LastSeen) < staleAfter {
 				continue
 			}
+			if ip := net.ParseIP(snap.IP); ip != nil && probe.PingIP(ctx, ip) {
+				d.store.Update(mac, func(dev *device.Device) {
+					dev.LastSeen = now
+				})
+				d.log.Debugf("stale refresh via ping mac=%s ip=%s", mac, snap.IP)
+				continue
+			}
 			var needProbe, becameOffline bool
 			var ip, iface, name string
 			d.store.Update(mac, func(dev *device.Device) {
